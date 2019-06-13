@@ -7,9 +7,10 @@ module DelayedJobWorkerPool
     def initialize(options = {})
       @options = options
       @worker_pids = []
+      @worker_pid_opts = {}
       @pending_signals = []
-      @pending_signal_read_pipe, @pending_signal_write_pipe = create_pipe(inheritable: false)
-      @master_alive_read_pipe, @master_alive_write_pipe = create_pipe(inheritable: true)
+      @pending_signal_read_pipe, @pending_signal_write_pipe = create_pipe(false)
+      @master_alive_read_pipe, @master_alive_write_pipe = create_pipe
       self.shutting_down = false
     end
 
@@ -41,7 +42,7 @@ module DelayedJobWorkerPool
 
     private
 
-    attr_reader :options, :worker_pids, :master_alive_read_pipe, :master_alive_write_pipe,
+    attr_reader :options, :worker_pids, :worker_pid_opts, :master_alive_read_pipe, :master_alive_write_pipe,
                 :pending_signals, :pending_signal_read_pipe, :pending_signal_write_pipe
     attr_accessor :shutting_down
 
@@ -102,7 +103,7 @@ module DelayedJobWorkerPool
       log("Worker #{worker_pid} exited with status #{status.to_i}")
       worker_pids.delete(worker_pid)
       invoke_callback(:after_worker_shutdown, worker_info(worker_pid))
-      fork_worker unless shutting_down
+      fork_worker(worker_pid_opts[worker_pid]) unless shutting_down
     end
 
     def has_workers?
@@ -120,6 +121,7 @@ module DelayedJobWorkerPool
     def fork_worker(opts = nil)
       worker_pid = Kernel.fork { run_worker(opts) }
       worker_pids << worker_pid
+      worker_pid_opts[worker_pid] = opts
       log("Started worker #{worker_pid}")
       invoke_callback(:after_worker_boot, worker_info(worker_pid))
     end
@@ -170,7 +172,7 @@ module DelayedJobWorkerPool
       opts.except(:workers, :preload_app, :pooled_queues, *DelayedJobWorkerPool::DSL::CALLBACK_SETTINGS).merge(name: worker_name(worker_pid))
     end
 
-    def create_pipe(inheritable: true)
+    def create_pipe(inheritable=true)
       read, write = IO.pipe
       unless inheritable
         make_file_descriptor_uninheritable(read)
